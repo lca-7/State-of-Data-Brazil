@@ -1,0 +1,50 @@
+{
+	"jobConfig": {
+		"name": "tech_challenge",
+		"description": "",
+		"role": "arn:aws:iam::213978282733:role/LabRole",
+		"command": "glueetl",
+		"version": "5.1",
+		"currentGlueVersion": "",
+		"runtime": null,
+		"workerType": "G.1X",
+		"numberOfWorkers": 10,
+		"maxCapacity": 10,
+		"jobRunQueuingEnabled": false,
+		"maxRetries": 0,
+		"timeout": 480,
+		"maxConcurrentRuns": 1,
+		"security": "none",
+		"scriptName": "tech_challenge.py",
+		"scriptLocation": "s3://aws-glue-assets-213978282733-us-east-1/scripts/",
+		"language": "python-3",
+		"spark": true,
+		"sparkConfiguration": "standard",
+		"jobParameters": [
+			{
+				"key": "--conf",
+				"value": "spark.eventLog.rolling.enabled=true --conf spark.sql.catalog.glue_catalog.glue.skip-name-validation=true",
+				"existing": false
+			}
+		],
+		"tags": [],
+		"jobMode": "DEVELOPER_MODE",
+		"createdOn": "2026-09-14T21:47:06.451Z",
+		"developerMode": true,
+		"connectionsList": [],
+		"temporaryDirectory": "s3://aws-glue-assets-213978282733-us-east-1/temporary/",
+		"logging": true,
+		"glueHiveMetastore": true,
+		"etlAutoTuning": true,
+		"metrics": true,
+		"observabilityMetrics": true,
+		"bookmark": "job-bookmark-disable",
+		"sparkPath": "s3://aws-glue-assets-213978282733-us-east-1/sparkHistoryLogs/",
+		"flexExecution": false,
+		"minFlexWorkers": null,
+		"maintenanceWindow": null
+	},
+	"hasBeenSaved": false,
+	"usageProfileName": null,
+	"script": "# TechChallenge: STATE OF DATA BRASIL\n\n\n## Seção 1 - Preparação Glue e Definição de Pastas S3\n\nimport sys\nimport re\nfrom awsglue.transforms import *\nfrom awsglue.utils import getResolvedOptions\nfrom pyspark.context import SparkContext\nfrom awsglue.context import GlueContext\nfrom awsglue.job import Job\nimport pyspark.sql.functions as F\nfrom pyspark.sql.types import IntegerType, DoubleType\n\n# 1. Inicialização Obrigatória do AWS Glue\ntry:\n    args = getResolvedOptions(sys.argv, ['JOB_NAME'])\n    job_name = args['JOB_NAME']\nexcept Exception:\n    job_name = \"tech_challenge\"\n\nsc = SparkContext.getOrCreate()\nglueContext = GlueContext(sc)\nspark = glueContext.spark_session\njob = Job(glueContext)\njob.init(job_name, {})\n\n\n# 2. Definição do caminho S3\nbucket_name = \"s3://tc3-213978282733\"\npath_raw = f\"{bucket_name}/raw\"\npath_bronze = f\"{bucket_name}/bronze\"\npath_silver = f\"{bucket_name}/silver\"\npath_gold = f\"{bucket_name}/gold\"\n\npath_2023 = f\"{path_raw}/State_of_data_BR_2023_Kaggle - df_survey_2023.csv\"\npath_2024 = f\"{path_raw}/Final Dataset - State of Data 2024 - Kaggle - df_survey_2024.csv\"\npath_2025 = f\"{path_raw}/Final Dataset - State of Data 2025-2026 - Kaggle.csv\"\n\n\n\n## Seção 2 - Exploração dos Arquivos Raw e Camada Bronze\n\n\n# 1. Leitura Raw\nread_opts = {\"header\": \"true\", \"inferSchema\": \"false\", \"quote\": \"\\\"\", \"escape\": \"\\\"\", \"multiline\": \"true\"}\ndf_23 = spark.read.options(**read_opts).csv(path_2023)\ndf_24 = spark.read.options(**read_opts).csv(path_2024)\ndf_25 = spark.read.options(**read_opts).csv(path_2025)\n\n# 2. Padronização de Colunas e Intersecção\ndef padronizar_nome_coluna(col_name, ano):\n    if ano == 2023:\n        match = re.search(r\"\\('([^']+)',\", col_name)\n        return match.group(1).strip().lower().replace('p', '').replace('_', '.') if match else col_name.lower()\n    return col_name.split('_')[0].strip().lower()\n\ncods_23 = set(padronizar_nome_coluna(c, 2023) for c in df_23.columns)\ncods_24 = set(padronizar_nome_coluna(c, 2024) for c in df_24.columns)\ncods_25 = set(padronizar_nome_coluna(c, 2025) for c in df_25.columns)\ncolunas_comuns = list(cods_23.intersection(cods_24).intersection(cods_25))\n\ndef preparar_bronze(df, ano):\n    df_prep = df.withColumn(\"ano_pesquisa\", F.lit(ano).cast(IntegerType()))\n    for c in df.columns: df_prep = df_prep.withColumnRenamed(c, padronizar_nome_coluna(c, ano))\n    return df_prep.select(*([F.col(\"ano_pesquisa\")] + [F.col(f\"`{c}`\") for c in colunas_comuns]))\n\n# 3. Unificação e criacao Bronze\ndf_bronze = preparar_bronze(df_23, 2023).unionByName(preparar_bronze(df_24, 2024)).unionByName(preparar_bronze(df_25, 2025))\ndf_bronze.write.mode(\"overwrite\").parquet(f\"{path_bronze}/state_of_data_bronze.parquet\")\n\n\n## Seção 3 - Exploração dos Arquivos Bronze e Camada Silver\n\n\n# 1. Carregar Bronze\ndf_bronze_read = spark.read.parquet(f\"{path_bronze}/state_of_data_bronze.parquet\")\n\n# 2. Limpeza e Transformação (Silver)\ndf_silver = df_bronze_read.dropDuplicates()\n\n# Tipagem, extração e renomeação de colunas chave para o negócio\ndf_silver = df_silver.selectExpr(\n    \"ano_pesquisa\",\n    \"trim(`1.b`) as genero\",\n    \"`1.i.2` as regiao\",\n    \"`2.f` as cargo\",\n    \"`2.h` as faixa_salarial\",\n    \"`2.i` as experiencia_dados\",\n    \"`2.r` as modelo_trabalho\",\n    \"case when `8.b.2` != '0' and `8.b.2` is not null then 1 else 0 end as usa_ia\",\n    \"case when `8.c.6` != '0' and `8.c.6` is not null then 1 else 0 end as usa_etl\"\n)\n\n# 3. criacao Silver\ndf_silver.write.mode(\"overwrite\").parquet(f\"{path_silver}/state_of_data_silver.parquet\")\n\n\n## Seção 4 - Exploração dos Arquivos Silver e Camada Gold\n\n\n# 1. Carregar Silver e processar regras\n\n# a. Converter Experiência em Senioridade\ndf_gold = df_silver.withColumn(\n    \"senioridade\",\n    F.when(F.lower(F.col(\"experiencia_dados\")).rlike(\"não tenho|menos de 1|1 a 2\"), \"Júnior\")\n     .when(F.lower(F.col(\"experiencia_dados\")).rlike(\"3 a 4|4 a 6|5 a 6\"), \"Pleno\")\n     .otherwise(\"Sênior+\")\n)\n\n# b. Média salarial\ndf_gold = df_gold.withColumn(\n    \"salario_numerico\",\n    F.when(F.col(\"faixa_salarial\").contains(\"Menos de R$ 1.000\"), 800.0)\n     .when(F.col(\"faixa_salarial\").contains(\"1.001\") & F.col(\"faixa_salarial\").contains(\"2.000\"), 1500.0)\n     .when(F.col(\"faixa_salarial\").contains(\"2.001\") & F.col(\"faixa_salarial\").contains(\"3.000\"), 2500.0)\n     .when(F.col(\"faixa_salarial\").contains(\"3.001\") & F.col(\"faixa_salarial\").contains(\"4.000\"), 3500.0)\n     .when(F.col(\"faixa_salarial\").contains(\"4.001\") & F.col(\"faixa_salarial\").contains(\"6.000\"), 5000.0)\n     .when(F.col(\"faixa_salarial\").contains(\"6.001\") & F.col(\"faixa_salarial\").contains(\"8.000\"), 7000.0)\n     .when(F.col(\"faixa_salarial\").contains(\"8.001\") & F.col(\"faixa_salarial\").contains(\"12.000\"), 10000.0)\n     .when(F.col(\"faixa_salarial\").contains(\"12.001\") & F.col(\"faixa_salarial\").contains(\"16.000\"), 14000.0)\n     .when(F.col(\"faixa_salarial\").contains(\"16.001\") & F.col(\"faixa_salarial\").contains(\"20.000\"), 18000.0)\n     .when(F.col(\"faixa_salarial\").contains(\"20.001\") & F.col(\"faixa_salarial\").contains(\"25.000\"), 22500.0)\n     .when(F.col(\"faixa_salarial\").contains(\"25.001\") & F.col(\"faixa_salarial\").contains(\"30.000\"), 27500.0)\n     .when(F.col(\"faixa_salarial\").contains(\"30.001\") | F.col(\"faixa_salarial\").contains(\"40.000\"), 35000.0)\n     .when(F.col(\"faixa_salarial\").contains(\"Mais de R$ 40.000\"), 45000.0)\n     .otherwise(None).cast(DoubleType())\n)\n\n# Tabela 1: Remuneração e IA \ndf_gold.write.mode(\"overwrite\").option(\"path\", f\"{path_gold}remuneracao_ia/\").saveAsTable(\"default.gold_remuneracao_ia\")\n\n# Tabela 2: Agregação de Diversidade de Gênero\ndf_diversidade = df_gold.groupBy(\"ano_pesquisa\", \"senioridade\", \"genero\").agg(\n    F.count(\"*\").alias(\"volume\"),\n    F.round(F.avg(\"salario_numerico\"), 2).alias(\"media_salarial\")\n)\ndf_diversidade.write.mode(\"overwrite\").option(\"path\", f\"{path_gold}diversidade/\").saveAsTable(\"default.gold_diversidade\")\n\njob.commit()\n\n"
+}
