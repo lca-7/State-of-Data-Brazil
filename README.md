@@ -5,7 +5,7 @@ Este projeto compõe a entrega do Tech Challenge (Fase 3) da PosTech FIAP e tem 
 
 Foi adotada a Arquitetura Medallion (Bronze, Silver e Gold) para garantir governança, rastreabilidade e performance na disponibilização dos dados. 
 
-![Diagrama de Arquitetura AWS](docs/aws_arq.png)
+![Diagrama de Arquitetura AWS](docs/aws_arq.drawio.png)
 
 Tecnologias Utilizadas
 
