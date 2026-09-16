@@ -1,0 +1,15 @@
+SELECT 
+    ano_pesquisa,
+    senioridade,
+    genero,
+    volume,
+    media_salarial,
+    
+    media_salarial - AVG(media_salarial) OVER (PARTITION BY ano_pesquisa, senioridade) as diferenca_para_media
+FROM 
+    default.gold_diversidade
+WHERE 
+    genero IN ('Masculino', 'Feminino')
+    AND senioridade != 'Não informado'
+ORDER BY 
+    ano_pesquisa DESC, senioridade, volume DESC;
