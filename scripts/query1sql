@@ -1,0 +1,13 @@
+SELECT 
+    ano_pesquisa,
+    modelo_trabalho,
+    COUNT(*) as total_profissionais,
+    ROUND((COUNT(*) * 100.0) / SUM(COUNT(*)) OVER (PARTITION BY ano_pesquisa), 1) as percentual_mercado
+FROM 
+    default.gold_remuneracao_ia
+WHERE 
+    modelo_trabalho IS NOT NULL
+GROUP BY 
+    ano_pesquisa, modelo_trabalho
+ORDER BY 
+    ano_pesquisa ASC, percentual_mercado DESC;
