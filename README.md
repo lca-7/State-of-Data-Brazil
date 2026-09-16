@@ -18,3 +18,7 @@ Tecnologias Utilizadas
 -Consultas Analíticas: Amazon Athena (SQL)
 
 -DataViz & Storytelling: Python (Google Colab, Boto3, Pandas, Seaborn, Matplotlib)
+
+
+Datasets Kaggle:
+https://www.kaggle.com/datahackers/datasets
